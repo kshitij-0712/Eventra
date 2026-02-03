@@ -1,70 +1,73 @@
 import streamlit as st
-import mysql.connector
-from mysql.connector import errorcode
 import datetime
-
 from db.connection import conn
 
 
-def convert_to_time(td):
-    """
-    Converts datetime.timedelta (returned by MySQL for TIME column) 
-    to datetime.time, which st.time_input requires.
-    """
-    if isinstance(td, datetime.timedelta):
-        total_seconds = int(td.total_seconds())
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
+def convert_to_time(value):
+    if isinstance(value, datetime.time):
+        return value
+
+    if isinstance(value, datetime.timedelta):
+        total = int(value.total_seconds())
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        seconds = total % 60
         return datetime.time(hours, minutes, seconds)
-    elif isinstance(td, datetime.time):
-        return td
-    elif isinstance(td, str):
+
+    if isinstance(value, str):
         try:
-            h, m, s = map(int, td.split(':'))
+            h, m, s = map(int, value.split(":"))
             return datetime.time(h, m, s)
-        except:
+        except ValueError:
             pass
-    return datetime.time(0, 0, 0)
+
+    return datetime.time(0, 0)
 
 
-def execute_query(query, params=None, fetch_type='all'):
-    """Utility to safely execute SELECT queries and return data."""
+def execute_query(query, params=None, fetch_type="all"):
+    """
+    Executes SELECT queries safely.
+    IMPORTANT: Rolls back on error to avoid
+    'current transaction is aborted' state in PostgreSQL.
+    """
+    cur = None
     try:
-        cursor = conn.cursor(buffered=True)
-        cursor.execute(query, params)
-        
-        if fetch_type == 'one':
-            result = cursor.fetchone()
-        elif fetch_type == 'all':
-            result = cursor.fetchall()
+        cur = conn.cursor()
+        cur.execute(query, params)
+
+        if fetch_type == "one":
+            result = cur.fetchone()
         else:
-            result = True 
-            
-        cursor.close()
+            result = cur.fetchall()
+
         return result
-    except mysql.connector.Error as err:
-        st.error(f"Database Read Error: {err.msg}")
+
+    except Exception as e:
+        conn.rollback()   # 🔴 CRITICAL FIX
+        st.error(f"Database Read Error: {e}")
         return None
 
+    finally:
+        if cur:
+            cur.close()
 
-def commit_transaction(sql, val):
-    """Utility to perform INSERT/UPDATE/DELETE with commit/rollback."""
+
+def commit_transaction(sql, params):
+    """
+    Executes INSERT / UPDATE / DELETE safely.
+    Always commits or rolls back.
+    """
+    cur = None
     try:
-        cursor = conn.cursor(buffered=True)
-        cursor.execute(sql, val)
+        cur = conn.cursor()
+        cur.execute(sql, params)
         conn.commit()
-        cursor.close()
         return True
-    except mysql.connector.Error as err:
-        conn.rollback()
-        cursor.close()
-        if err.errno == errorcode.ER_DUP_ENTRY:
-            return "Duplicate entry error."
-        elif err.errno == errorcode.ER_NO_REFERENCED_ROW_2:
-            return "Foreign key constraint failed (Invalid ID)."
-        else:
-            return f"Database Write Error: {err.msg}"
+
     except Exception as e:
         conn.rollback()
-        return f"Unexpected Error: {e}"
+        return str(e)
+
+    finally:
+        if cur:
+            cur.close()

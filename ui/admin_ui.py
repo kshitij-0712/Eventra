@@ -74,10 +74,7 @@ def display_add_new_student():
                 "INSERT INTO tbl_students (srn,name,semester,section) VALUES (%s,%s,%s,%s)",
                 (srn, name, sem, sec)
             )
-            if result is True:
-                st.success("Student added.")
-            else:
-                st.error(result)
+            st.success("Student added.") if result is True else st.error(result)
 
 
 def display_add_new_event():
@@ -100,7 +97,7 @@ def display_add_new_event():
         end = st.time_input("End", datetime.time(12, 0))
         host_id = st.selectbox("Host", host_map.keys(), format_func=lambda x: host_map[x])
         venue_id = st.selectbox("Venue", venue_map.keys(), format_func=lambda x: venue_map[x])
-        maxp = st.number_input("Max Participants", 1, venue_map and 100, 50)
+        maxp = st.number_input("Max Participants", 1, 100, 50)
 
         if st.form_submit_button("Create"):
             result = commit_transaction(
@@ -111,10 +108,7 @@ def display_add_new_event():
                 """,
                 (name, desc, date, start, end, venue_id, host_id, maxp)
             )
-            if result is True:
-                st.success("Event created.")
-            else:
-                st.error(result)
+            st.success("Event created.") if result is True else st.error(result)
 
 
 def display_update_event_details():
@@ -122,18 +116,18 @@ def display_update_event_details():
 
     events = list_scheduled_events()
     if not events:
-        st.info("No events.")
+        st.info("No upcoming events.")
         return
 
     event_map = {e[0]: e[1] for e in events}
     eid = st.selectbox("Event", event_map.keys(), format_func=lambda x: event_map[x])
 
-    cursor = conn.cursor(buffered=True)
-    cursor.execute("SELECT * FROM tbl_events WHERE id=%s", (eid,))
-    ev = cursor.fetchone()
-    cursor.close()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM tbl_events WHERE id=%s", (eid,))
+    ev = cur.fetchone()
+    cur.close()
 
-    (_, name, desc, date, start, end, loc, org, status, maxp, *_) = ev
+    (_, name, desc, date, start, end, *_rest) = ev
 
     with st.form("update_event"):
         n_name = st.text_input("Name", name)
@@ -144,15 +138,13 @@ def display_update_event_details():
         if st.form_submit_button("Update"):
             result = commit_transaction(
                 """
-                UPDATE tbl_events SET name=%s,description=%s,date=%s,start_time=%s,end_time=%s
+                UPDATE tbl_events
+                SET name=%s,description=%s,date=%s,start_time=%s,end_time=%s
                 WHERE id=%s
                 """,
                 (n_name, n_desc, n_date, n_start, n_end, eid)
             )
-            if result is True:
-                st.success("Updated.")
-            else:
-                st.error(result)
+            st.success("Updated.") if result is True else st.error(result)
 
 
 def display_manage_event_tickets():
@@ -179,10 +171,7 @@ def display_manage_event_tickets():
                 "INSERT INTO tbl_tickets (event_id,ticket_type,price,quantity) VALUES (%s,%s,%s,%s)",
                 (eid, ttype, price, qty)
             )
-            if result is True:
-                st.success("Ticket added.")
-            else:
-                st.error(result)
+            st.success("Ticket added.") if result is True else st.error(result)
 
 
 def display_mark_attendance():
@@ -211,13 +200,10 @@ def display_mark_attendance():
     sid = st.selectbox("Student ID", [p[0] for p in parts])
     if st.button("Mark Attended"):
         result = commit_transaction(
-            "UPDATE tbl_event_participants SET attendance_status=1 WHERE event_id=%s AND user_id=%s",
+            "UPDATE tbl_event_participants SET attendance_status=TRUE WHERE event_id=%s AND user_id=%s",
             (eid, sid)
         )
-        if result is True:
-            st.success("Marked attended.")
-        else:
-            st.error(result)
+        st.success("Marked attended.") if result is True else st.error(result)
 
 
 def display_view_participants():
@@ -260,20 +246,122 @@ def display_manage_venues():
 
     vid = st.selectbox("Venue ID", [v[0] for v in venues])
     status = st.radio("Availability", [1,0])
+    status_bool = True if status == 1 else False
+
     if st.button("Update"):
         result = commit_transaction(
             "UPDATE tbl_venues SET is_available=%s WHERE id=%s",
-            (status, vid)
+            (status_bool, vid)
         )
-        if result is True:
-            st.success("Updated.")
-        else:
-            st.error(result)
+        st.success("Updated.") if result is True else st.error(result)
 
 
 def display_manage_resources():
-    st.subheader("📦 Resources")
+    st.subheader("📦 Resource Management")
 
     resources = list_all_resources()
-    if resources:
-        st.dataframe(pd.DataFrame(resources, columns=["ID","Name","Type","Qty","Status"]), hide_index=True)
+    if not resources:
+        st.info("No resources.")
+        return
+
+    st.dataframe(
+        pd.DataFrame(resources, columns=["ID","Name","Type","Quantity","Status"]),
+        hide_index=True
+    )
+
+    st.markdown("---")
+    st.markdown("### 🔗 Assign Resource to Event")
+
+    events = execute_query(
+        "SELECT id, name FROM tbl_events WHERE (date + end_time) > NOW()"
+    )
+    if not events:
+        st.info("No upcoming events.")
+        return
+
+    event_map = {e[0]: e[1] for e in events}
+    resource_map = {r[0]: f"{r[1]} ({r[3]} available)" for r in resources}
+
+    event_id = st.selectbox("Select Event", event_map.keys(), format_func=lambda x: event_map[x])
+    resource_id = st.selectbox("Select Resource", resource_map.keys(), format_func=lambda x: resource_map[x])
+    qty = st.number_input("Quantity to Assign", min_value=1, value=1)
+
+    col1, col2 = st.columns(2)
+    start_dt = col1.datetime_input("Booking Start")
+    end_dt = col2.datetime_input("Booking End")
+
+    if st.button("Assign Resource"):
+        if end_dt <= start_dt:
+            st.error("Booking end must be after start.")
+            return
+
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO tbl_event_resources
+                (event_id, resource_id, quantity_booked, booking_start, booking_end)
+                VALUES (%s,%s,%s,%s,%s)
+                """,
+                (event_id, resource_id, qty, start_dt, end_dt)
+            )
+            conn.commit()
+            st.success("Resource assigned.")
+        except Exception as e:
+            conn.rollback()
+            st.error(e)
+        finally:
+            if cur:
+                cur.close()
+
+    st.markdown("---")
+    st.markdown("### 🧹 Replenish Expired Resource Bookings")
+
+    if st.button("Run Replenish Resources"):
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT replenish_resources()")
+            restored = cur.fetchone()[0]
+            conn.commit()
+
+            if restored > 0:
+                st.success(f"Resources replenished: {restored}")
+            else:
+                st.info("No resources needed replenishment.")
+        except Exception as e:
+            conn.rollback()
+            st.error(e)
+        finally:
+            if cur:
+                cur.close()
+
+    st.markdown("---")
+    st.markdown("### 🛠️ Schedule Resource Maintenance")
+
+    res_map = {r[0]: r[1] for r in resources}
+    res_id = st.selectbox("Resource", res_map.keys(), format_func=lambda x: res_map[x])
+
+    col1, col2 = st.columns(2)
+    m_start = col1.datetime_input("Maintenance Start")
+    m_end = col2.datetime_input("Maintenance End")
+
+    reason = st.text_input("Reason")
+
+    if st.button("Start Maintenance"):
+        if m_end <= m_start:
+            st.error("Maintenance end must be after start.")
+            return
+
+        result = commit_transaction(
+            """
+            INSERT INTO tbl_resource_maintenance
+            (resource_id, maintenance_start, maintenance_end, description)
+            VALUES (%s,%s,%s,%s)
+            """,
+            (res_id, m_start, m_end, reason)
+        )
+
+        st.success("Resource sent to maintenance.") if result is True else st.error(result)
+

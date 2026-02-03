@@ -7,80 +7,66 @@ from utils.helpers import execute_query, commit_transaction
 from services.data_fetch_service import list_all_students, list_scheduled_events
 
 
-# ---------- STUDENT AUTH & MENU ----------
+# ---------------- LOGIN & MENU ----------------
 
 def student_login_page():
-    """Handles student login and redirection."""
     st.header("🧑‍🎓 Student Login")
     students = list_all_students()
 
-    if students:
-        student_map = {s[0]: f"{s[2]} ({s[1]})" for s in students}
-        valid_options = list(student_map.keys())
+    student_map = {s[0]: f"{s[2]} ({s[1]})" for s in students}
+    sid = st.selectbox(
+        "Select your Student ID:",
+        student_map.keys(),
+        format_func=lambda x: student_map[x]
+    )
 
-        selected_id = st.selectbox(
-            "Select your Student ID:",
-            options=valid_options,
-            format_func=lambda x: student_map.get(x, 'Select Student')
-        )
-
-        if st.button("Log In"):
-            st.session_state['logged_in_user_id'] = selected_id
-            st.session_state['page'] = 'student_menu'
-            st.rerun()
-    else:
-        st.warning("No students found.")
-
-    if st.button("← Back to Main Menu"):
-        st.session_state['page'] = 'main'
+    if st.button("Log In"):
+        st.session_state["logged_in_user_id"] = sid
+        st.session_state["page"] = "student_menu"
         st.rerun()
 
 
 def student_menu():
-    user_id = st.session_state.get('logged_in_user_id')
-    if not user_id:
-        st.session_state['page'] = 'main'
-        st.rerun()
+    user_id = st.session_state["logged_in_user_id"]
 
     student_name = execute_query(
-        "SELECT name FROM tbl_students WHERE id = %s",
+        "SELECT name FROM tbl_students WHERE id=%s",
         (user_id,),
-        fetch_type='one'
+        fetch_type="one"
     )[0]
 
     st.sidebar.title(f"Welcome, {student_name}!")
     st.sidebar.button(
         "Log Out",
-        on_click=lambda: (st.session_state.update({'page': 'main', 'logged_in_user_id': None}), st.rerun()),
-        use_container_width=True
+        on_click=lambda: st.session_state.update(
+            {"page": "main", "logged_in_user_id": None}
+        )
     )
-
-    st.header("🎫 Student Event Dashboard")
 
     choice = st.sidebar.radio(
         "Menu",
         (
-            'My Registrations',
-            'Register for Event',
-            'Completed Events',
-            'Write Feedback',
-            'Cancel Registration'
+            "My Registrations",
+            "Register for Event",
+            "Completed Events",
+            "Write Feedback",
+            "Cancel Registration",
         )
     )
 
-    if choice == 'My Registrations':
+    if choice == "My Registrations":
         display_my_registrations(user_id)
-    elif choice == 'Register for Event':
+    elif choice == "Register for Event":
         display_register_event(user_id)
-    elif choice == 'Completed Events':
+    elif choice == "Completed Events":
         display_list_completed_events()
-    elif choice == 'Write Feedback':
+    elif choice == "Write Feedback":
         display_write_event_feedback(user_id)
-    elif choice == 'Cancel Registration':
+    elif choice == "Cancel Registration":
         display_cancel_registration(user_id)
 
 
-# ---------- STUDENT FUNCTIONS ----------
+# ---------------- STUDENT FEATURES ----------------
 
 def display_my_registrations(user_id):
     st.subheader("🎫 My Upcoming Registrations")
@@ -91,7 +77,7 @@ def display_my_registrations(user_id):
         JOIN tbl_events e ON p.event_id = e.id
         LEFT JOIN tbl_venues v ON e.location_id = v.id
         WHERE p.user_id = %s
-        AND CONCAT(e.date, ' ', e.end_time) > NOW()
+          AND (e.date + e.end_time) > NOW()
         ORDER BY e.date
     """
     rows = execute_query(query, (user_id,))
@@ -99,7 +85,10 @@ def display_my_registrations(user_id):
         st.info("You are not registered for any upcoming events.")
         return False
 
-    df = pd.DataFrame(rows, columns=['Event ID', 'Event Name', 'Date', 'Start Time', 'Venue'])
+    df = pd.DataFrame(
+        rows,
+        columns=["Event ID", "Event Name", "Date", "Start Time", "Venue"],
+    )
     st.dataframe(df, hide_index=True, use_container_width=True)
     return True
 
@@ -111,34 +100,55 @@ def display_cancel_registration(user_id):
         return
 
     query = """
-        SELECT e.id, e.name FROM tbl_event_participants p
+        SELECT e.id, e.name
+        FROM tbl_event_participants p
         JOIN tbl_events e ON p.event_id = e.id
         WHERE p.user_id = %s
-        AND CONCAT(e.date, ' ', e.end_time) > NOW()
+          AND (e.date + e.end_time) > NOW()
     """
     events = execute_query(query, (user_id,))
     event_map = {e[0]: e[1] for e in events}
 
-    event_id = st.selectbox("Select Event:", event_map.keys(), format_func=lambda x: event_map[x])
+    event_id = st.selectbox(
+        "Select Event:",
+        event_map.keys(),
+        format_func=lambda x: event_map[x],
+    )
 
     if st.button("Confirm Cancellation"):
+        cursor = None
         try:
-            cursor = conn.cursor(buffered=True)
+            cursor = conn.cursor()
 
             cursor.execute(
                 "DELETE FROM tbl_event_participants WHERE event_id=%s AND user_id=%s",
-                (event_id, user_id)
+                (event_id, user_id),
             )
 
-            cursor.execute("""
-                DELETE FROM tbl_orders 
-                WHERE user_id=%s 
-                AND ticket_id IN (SELECT id FROM tbl_tickets WHERE event_id=%s)
-            """, (user_id, event_id))
-
             cursor.execute(
-                "UPDATE tbl_tickets SET quantity = quantity + 1 WHERE event_id=%s LIMIT 1",
-                (event_id,)
+                """
+                DELETE FROM tbl_orders
+                WHERE user_id=%s
+                  AND ticket_id IN (
+                      SELECT id FROM tbl_tickets WHERE event_id=%s
+                  )
+                """,
+                (user_id, event_id),
+            )
+
+            # 🔴 PostgreSQL FIX: no LIMIT in UPDATE
+            cursor.execute(
+                """
+                UPDATE tbl_tickets
+                SET quantity = quantity + 1
+                WHERE id = (
+                    SELECT id FROM tbl_tickets
+                    WHERE event_id = %s
+                    ORDER BY id
+                    LIMIT 1
+                )
+                """,
+                (event_id,),
             )
 
             conn.commit()
@@ -147,7 +157,8 @@ def display_cancel_registration(user_id):
             conn.rollback()
             st.error(e)
         finally:
-            cursor.close()
+            if cursor:
+                cursor.close()
 
 
 def display_register_event(user_id):
@@ -159,11 +170,19 @@ def display_register_event(user_id):
         return
 
     event_map = {e[0]: f"{e[1]} at {e[6]}" for e in events}
-    event_id = st.selectbox("Select Event:", event_map.keys(), format_func=lambda x: event_map[x])
+    event_id = st.selectbox(
+        "Select Event:",
+        event_map.keys(),
+        format_func=lambda x: event_map[x],
+    )
 
     tickets = execute_query(
-        "SELECT id, ticket_type, price, quantity FROM tbl_tickets WHERE event_id=%s AND quantity>0",
-        (event_id,)
+        """
+        SELECT id, ticket_type, price, quantity
+        FROM tbl_tickets
+        WHERE event_id=%s AND quantity>0
+        """,
+        (event_id,),
     )
 
     if not tickets:
@@ -174,36 +193,55 @@ def display_register_event(user_id):
     ticket_id = st.selectbox(
         "Select Ticket:",
         ticket_map.keys(),
-        format_func=lambda x: f"{ticket_map[x][1]} - ${ticket_map[x][2]}"
+        format_func=lambda x: f"{ticket_map[x][1]} - ₹{ticket_map[x][2]}",
     )
 
-    qty = st.number_input("Quantity", min_value=1, max_value=ticket_map[ticket_id][3], value=1)
+    qty = st.number_input(
+        "Quantity",
+        min_value=1,
+        max_value=ticket_map[ticket_id][3],
+        value=1,
+    )
     total = ticket_map[ticket_id][2] * qty
-    st.write(f"Total: ${total}")
+    st.write(f"Total: ₹{total}")
 
     if st.button("Confirm Order and Register"):
+        cursor = None
         try:
-            cursor = conn.cursor(buffered=True)
-            cursor.execute("SELECT quantity FROM tbl_tickets WHERE id=%s FOR UPDATE", (ticket_id,))
-            if qty > cursor.fetchone()[0]:
-                st.error("Quantity changed.")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT quantity FROM tbl_tickets WHERE id=%s FOR UPDATE",
+                (ticket_id,),
+            )
+
+            available = cursor.fetchone()[0]
+            if qty > available:
+                st.error("Ticket quantity changed. Try again.")
                 conn.rollback()
                 return
 
             cursor.execute(
-                "UPDATE tbl_tickets SET quantity=quantity-%s WHERE id=%s",
-                (qty, ticket_id)
+                "UPDATE tbl_tickets SET quantity = quantity - %s WHERE id=%s",
+                (qty, ticket_id),
             )
 
             for _ in range(qty):
                 cursor.execute(
-                    "INSERT INTO tbl_orders (ticket_id, user_id, order_time, payment_status) VALUES (%s,%s,%s,'Completed')",
-                    (ticket_id, user_id, datetime.datetime.now())
+                    """
+                    INSERT INTO tbl_orders
+                    (ticket_id, user_id, order_time, payment_status)
+                    VALUES (%s,%s,%s,'Completed')
+                    """,
+                    (ticket_id, user_id, datetime.datetime.now()),
                 )
 
             cursor.execute(
-                "INSERT INTO tbl_event_participants (event_id, user_id, registration_time) VALUES (%s,%s,%s)",
-                (event_id, user_id, datetime.datetime.now())
+                """
+                INSERT INTO tbl_event_participants
+                (event_id, user_id, registration_time)
+                VALUES (%s,%s,%s)
+                """,
+                (event_id, user_id, datetime.datetime.now()),
             )
 
             conn.commit()
@@ -212,7 +250,8 @@ def display_register_event(user_id):
             conn.rollback()
             st.error(e)
         finally:
-            cursor.close()
+            if cursor:
+                cursor.close()
 
 
 def display_list_completed_events():
@@ -223,7 +262,7 @@ def display_list_completed_events():
         FROM tbl_events e
         LEFT JOIN tbl_venues v ON e.location_id = v.id
         LEFT JOIN tbl_hosts h ON e.organizer_id = h.id
-        WHERE CONCAT(e.date, ' ', e.end_time) <= NOW()
+        WHERE (e.date + e.end_time) <= NOW()
         ORDER BY e.date DESC
     """
     rows = execute_query(query)
@@ -231,7 +270,10 @@ def display_list_completed_events():
         st.info("No completed events.")
         return False
 
-    df = pd.DataFrame(rows, columns=['ID', 'Name', 'Date', 'Venue', 'Organizer'])
+    df = pd.DataFrame(
+        rows,
+        columns=["ID", "Name", "Date", "Venue", "Organizer"],
+    )
     st.dataframe(df, hide_index=True, use_container_width=True)
     return True
 
@@ -242,26 +284,41 @@ def display_write_event_feedback(user_id):
     if not display_list_completed_events():
         return
 
-    events = execute_query("SELECT id, name FROM tbl_events WHERE CONCAT(date,' ',end_time)<=NOW()")
+    events = execute_query(
+        "SELECT id, name FROM tbl_events WHERE (date + end_time) <= NOW()"
+    )
     event_map = {e[0]: e[1] for e in events}
 
-    event_id = st.selectbox("Select Event:", event_map.keys(), format_func=lambda x: event_map[x])
-
-    part = execute_query(
-        "SELECT attendance_status FROM tbl_event_participants WHERE event_id=%s AND user_id=%s",
-        (event_id, user_id),
-        fetch_type='one'
+    event_id = st.selectbox(
+        "Select Event:",
+        event_map.keys(),
+        format_func=lambda x: event_map[x],
     )
 
-    if not part or part[0] == 0:
+    part = execute_query(
+        """
+        SELECT attendance_status
+        FROM tbl_event_participants
+        WHERE event_id=%s AND user_id=%s
+        """,
+        (event_id, user_id),
+        fetch_type="one",
+    )
+
+    if not part or part[0] is False:
         st.error("Attendance not marked.")
         return
 
     feedback = execute_query(
-        "SELECT id FROM tbl_event_feedback WHERE event_id=%s AND user_id=%s",
+        """
+        SELECT id
+        FROM tbl_event_feedback
+        WHERE event_id=%s AND user_id=%s
+        """,
         (event_id, user_id),
-        fetch_type='one'
+        fetch_type="one",
     )
+
     if feedback:
         st.info("Feedback already submitted.")
         return
@@ -271,8 +328,12 @@ def display_write_event_feedback(user_id):
         comments = st.text_area("Comments")
         if st.form_submit_button("Submit"):
             result = commit_transaction(
-                "INSERT INTO tbl_event_feedback (event_id,user_id,rating,comments,submitted_at) VALUES (%s,%s,%s,%s,%s)",
-                (event_id, user_id, rating, comments, datetime.datetime.now())
+                """
+                INSERT INTO tbl_event_feedback
+                (event_id, user_id, rating, comments, submitted_at)
+                VALUES (%s,%s,%s,%s,%s)
+                """,
+                (event_id, user_id, rating, comments, datetime.datetime.now()),
             )
             if result is True:
                 st.success("Feedback submitted.")

@@ -1,29 +1,27 @@
 import streamlit as st
-import mysql.connector
-from mysql.connector import errorcode
+import psycopg2
+import os
+from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 
-# IMPORTANT: Replace with your actual MySQL credentials
+load_dotenv()
+
 DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "root",
-    "database": "pesu_proj"
+    "host": os.getenv("SUPABASE_DB_HOST"),
+    "dbname": os.getenv("SUPABASE_DB_NAME"),
+    "user": os.getenv("SUPABASE_DB_USER"),
+    "password": os.getenv("SUPABASE_DB_PASSWORD"),
+    "port": os.getenv("SUPABASE_DB_PORT", "5432"),
 }
 
 @st.cache_resource(ttl=3600)
 def init_connection():
-    """Initializes and caches the database connection."""
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        if not conn.is_connected():
-            raise Exception("Connection failed after initialization.")
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.autocommit = False
         return conn
-    except mysql.connector.Error as err:
-        st.error(f"Error connecting to database: {err.msg}")
-        st.stop()
-    except Exception as e:
-        st.error(f"An unexpected error occurred during database connection: {e}")
+    except psycopg2.Error as err:
+        st.error(f"Supabase DB connection error: {err}")
         st.stop()
 
-# Initialize connection once
 conn = init_connection()

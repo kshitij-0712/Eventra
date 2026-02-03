@@ -3,7 +3,7 @@ import streamlit as st
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
     layout="wide",
-    page_title="PESU Event Management System"
+    page_title="Eventra"
 )
 
 # ---------- SESSION STATE ----------
@@ -32,7 +32,6 @@ def main_menu():
     st.markdown(
         "A Smart Way Of Event Management for Campus Life. "
     
-        "Please select a portal to proceed :"
     )
 
     col1, col2, col3 = st.columns(3)
@@ -92,7 +91,7 @@ def display_view_event_feedback():
             st.dataframe(df, hide_index=True, use_container_width=True)
 
         avg = execute_query(
-            "SELECT GetAverageRating(%s)",
+            "SELECT get_average_rating(%s)",
             (event_id,),
             fetch_type="one"
         )[0] or 0.0
