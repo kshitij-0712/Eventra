@@ -29,11 +29,19 @@ def student_login_page():
 def student_menu():
     user_id = st.session_state["logged_in_user_id"]
 
-    student_name = execute_query(
+    result = execute_query(
         "SELECT name FROM tbl_students WHERE id=%s",
         (user_id,),
         fetch_type="one"
-    )[0]
+    )
+    if not result:
+        st.error("Student not found. Please log in again.")
+        st.session_state["page"] = "main"
+        st.session_state["logged_in_user_id"] = None
+        st.rerun()
+        return
+
+    student_name = result[0]
 
     st.sidebar.title(f"Welcome, {student_name}!")
     st.sidebar.button(
@@ -120,42 +128,56 @@ def display_cancel_registration(user_id):
         try:
             cursor = conn.cursor()
 
-            cursor.execute(
-                "DELETE FROM tbl_event_participants WHERE event_id=%s AND user_id=%s",
-                (event_id, user_id),
-            )
-
+            # Lock the ticket row, then restore quantity
             cursor.execute(
                 """
-                DELETE FROM tbl_orders
-                WHERE user_id=%s
-                  AND ticket_id IN (
-                      SELECT id FROM tbl_tickets WHERE event_id=%s
-                  )
+                SELECT id FROM tbl_tickets
+                WHERE event_id = %s
+                FOR UPDATE
+                """,
+                (event_id,),
+            )
+
+            # Get the ticket id from the student's order for this event
+            cursor.execute(
+                """
+                SELECT o.ticket_id
+                FROM tbl_orders o
+                JOIN tbl_tickets t ON o.ticket_id = t.id
+                WHERE o.user_id = %s AND t.event_id = %s
                 """,
                 (user_id, event_id),
             )
+            order_row = cursor.fetchone()
 
-            # 🔴 PostgreSQL FIX: no LIMIT in UPDATE
-            cursor.execute(
-                """
-                UPDATE tbl_tickets
-                SET quantity = quantity + 1
-                WHERE id = (
-                    SELECT id FROM tbl_tickets
-                    WHERE event_id = %s
-                    ORDER BY id
-                    LIMIT 1
+            if order_row:
+                cursor.execute(
+                    "UPDATE tbl_tickets SET quantity = quantity + 1 WHERE id=%s",
+                    (order_row[0],),
                 )
-                """,
-                (event_id,),
+
+            if order_row:
+                cursor.execute(
+                    """
+                    DELETE FROM tbl_orders
+                    WHERE user_id=%s
+                      AND ticket_id IN (
+                          SELECT id FROM tbl_tickets WHERE event_id=%s
+                      )
+                    """,
+                    (user_id, event_id),
+                )
+
+            cursor.execute(
+                "DELETE FROM tbl_event_participants WHERE event_id=%s AND user_id=%s",
+                (event_id, user_id),
             )
 
             conn.commit()
             st.success("Registration cancelled successfully.")
         except Exception as e:
             conn.rollback()
-            st.error(e)
+            st.error(f"Cancellation failed: {e}")
         finally:
             if cursor:
                 cursor.close()
@@ -175,6 +197,19 @@ def display_register_event(user_id):
         event_map.keys(),
         format_func=lambda x: event_map[x],
     )
+
+    existing = execute_query(
+        """
+        SELECT 1
+        FROM tbl_event_participants
+        WHERE event_id=%s AND user_id=%s
+        """,
+        (event_id, user_id),
+        fetch_type="one",
+    )
+    if existing:
+        st.info("You are already registered for this event.")
+        return
 
     tickets = execute_query(
         """
@@ -196,44 +231,50 @@ def display_register_event(user_id):
         format_func=lambda x: f"{ticket_map[x][1]} - ₹{ticket_map[x][2]}",
     )
 
-    qty = st.number_input(
-        "Quantity",
-        min_value=1,
-        max_value=ticket_map[ticket_id][3],
-        value=1,
-    )
-    total = ticket_map[ticket_id][2] * qty
-    st.write(f"Total: ₹{total}")
+    price = ticket_map[ticket_id][2]
+    st.write(f"Price: ₹{price}")
 
     if st.button("Confirm Order and Register"):
         cursor = None
         try:
             cursor = conn.cursor()
             cursor.execute(
+                """
+                SELECT 1
+                FROM tbl_event_participants
+                WHERE event_id=%s AND user_id=%s
+                """,
+                (event_id, user_id),
+            )
+            if cursor.fetchone():
+                st.info("You are already registered for this event.")
+                conn.rollback()
+                return
+
+            cursor.execute(
                 "SELECT quantity FROM tbl_tickets WHERE id=%s FOR UPDATE",
                 (ticket_id,),
             )
 
             available = cursor.fetchone()[0]
-            if qty > available:
-                st.error("Ticket quantity changed. Try again.")
+            if available < 1:
+                st.error("Tickets sold out. Try another ticket type.")
                 conn.rollback()
                 return
 
             cursor.execute(
-                "UPDATE tbl_tickets SET quantity = quantity - %s WHERE id=%s",
-                (qty, ticket_id),
+                "UPDATE tbl_tickets SET quantity = quantity - 1 WHERE id=%s",
+                (ticket_id,),
             )
 
-            for _ in range(qty):
-                cursor.execute(
-                    """
-                    INSERT INTO tbl_orders
-                    (ticket_id, user_id, order_time, payment_status)
-                    VALUES (%s,%s,%s,'Completed')
-                    """,
-                    (ticket_id, user_id, datetime.datetime.now()),
-                )
+            cursor.execute(
+                """
+                INSERT INTO tbl_orders
+                (ticket_id, user_id, order_time, payment_status)
+                VALUES (%s,%s,%s,'Completed')
+                """,
+                (ticket_id, user_id, datetime.datetime.now()),
+            )
 
             cursor.execute(
                 """

@@ -18,8 +18,10 @@ def admin_portal_menu():
     st.sidebar.title("Host/Admin Menu")
     st.sidebar.button(
         "Log Out",
-        on_click=lambda: (st.session_state.update({'page': 'main', 'logged_in_user_id': None}), st.rerun()),
-        use_container_width=True
+        on_click=lambda: st.session_state.update(
+            {"page": "main", "logged_in_user_id": None}
+        ),
+        use_container_width=True,
     )
 
     st.header("🧑‍💼 Host & Admin Dashboard")
@@ -122,12 +124,16 @@ def display_update_event_details():
     event_map = {e[0]: e[1] for e in events}
     eid = st.selectbox("Event", event_map.keys(), format_func=lambda x: event_map[x])
 
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM tbl_events WHERE id=%s", (eid,))
-    ev = cur.fetchone()
-    cur.close()
+    ev = execute_query(
+        "SELECT name, description, date, start_time, end_time FROM tbl_events WHERE id=%s",
+        (eid,),
+        fetch_type="one",
+    )
+    if not ev:
+        st.error("Event not found.")
+        return
 
-    (_, name, desc, date, start, end, *_rest) = ev
+    name, desc, date, start, end = ev
 
     with st.form("update_event"):
         n_name = st.text_input("Name", name)
@@ -151,6 +157,9 @@ def display_manage_event_tickets():
     st.subheader("🎫 Manage Tickets")
 
     events = execute_query("SELECT id,name FROM tbl_events")
+    if not events:
+        st.info("No events found.")
+        return
     event_map = {e[0]: e[1] for e in events}
     eid = st.selectbox("Event", event_map.keys(), format_func=lambda x: event_map[x])
 
@@ -178,6 +187,9 @@ def display_mark_attendance():
     st.subheader("🧑‍💼 Mark Attendance")
 
     events = execute_query("SELECT id,name FROM tbl_events")
+    if not events:
+        st.info("No events found.")
+        return
     event_map = {e[0]: e[1] for e in events}
     eid = st.selectbox("Event", event_map.keys(), format_func=lambda x: event_map[x])
 
@@ -287,10 +299,14 @@ def display_manage_resources():
     qty = st.number_input("Quantity to Assign", min_value=1, value=1)
 
     col1, col2 = st.columns(2)
-    start_dt = col1.datetime_input("Booking Start")
-    end_dt = col2.datetime_input("Booking End")
+    start_date = col1.date_input("Booking Start Date", key="book_start_date")
+    start_time = col1.time_input("Booking Start Time", datetime.time(9, 0), key="book_start_time")
+    end_date = col2.date_input("Booking End Date", key="book_end_date")
+    end_time = col2.time_input("Booking End Time", datetime.time(17, 0), key="book_end_time")
 
     if st.button("Assign Resource"):
+        start_dt = datetime.datetime.combine(start_date, start_time)
+        end_dt = datetime.datetime.combine(end_date, end_time)
         if end_dt <= start_dt:
             st.error("Booking end must be after start.")
             return
@@ -344,12 +360,16 @@ def display_manage_resources():
     res_id = st.selectbox("Resource", res_map.keys(), format_func=lambda x: res_map[x])
 
     col1, col2 = st.columns(2)
-    m_start = col1.datetime_input("Maintenance Start")
-    m_end = col2.datetime_input("Maintenance End")
+    m_start_date = col1.date_input("Maintenance Start Date", key="maint_start_date")
+    m_start_time = col1.time_input("Maintenance Start Time", datetime.time(9, 0), key="maint_start_time")
+    m_end_date = col2.date_input("Maintenance End Date", key="maint_end_date")
+    m_end_time = col2.time_input("Maintenance End Time", datetime.time(17, 0), key="maint_end_time")
 
     reason = st.text_input("Reason")
 
     if st.button("Start Maintenance"):
+        m_start = datetime.datetime.combine(m_start_date, m_start_time)
+        m_end = datetime.datetime.combine(m_end_date, m_end_time)
         if m_end <= m_start:
             st.error("Maintenance end must be after start.")
             return

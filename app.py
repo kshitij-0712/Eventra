@@ -90,11 +90,12 @@ def display_view_event_feedback():
             )
             st.dataframe(df, hide_index=True, use_container_width=True)
 
-        avg = execute_query(
+        avg_result = execute_query(
             "SELECT get_average_rating(%s)",
             (event_id,),
             fetch_type="one"
-        )[0] or 0.0
+        )
+        avg = (avg_result[0] if avg_result else None) or 0.0
 
         st.markdown(f"### ⭐ Average Rating: **{avg:.2f}/5.00**")
 
