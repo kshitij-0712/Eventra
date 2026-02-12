@@ -9,9 +9,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-USER_SERVICE_URL = os.getenv("USER_SERVICE_URL", "http://localhost:8001")
-EVENT_SERVICE_URL = os.getenv("EVENT_SERVICE_URL", "http://localhost:8002")
-FEEDBACK_SERVICE_URL = os.getenv("FEEDBACK_SERVICE_URL", "http://localhost:8003")
+
+def _get_config(key, default):
+    """Read from env vars first (Docker), then Streamlit secrets (Cloud)."""
+    val = os.getenv(key)
+    if val:
+        return val
+    try:
+        import streamlit as st
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+USER_SERVICE_URL = _get_config("USER_SERVICE_URL", "http://localhost:8001")
+EVENT_SERVICE_URL = _get_config("EVENT_SERVICE_URL", "http://localhost:8002")
+FEEDBACK_SERVICE_URL = _get_config("FEEDBACK_SERVICE_URL", "http://localhost:8003")
 
 TIMEOUT = 10  # seconds
 
