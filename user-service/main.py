@@ -50,7 +50,14 @@ app = FastAPI(title="Eventra User Service", version="1.0.0", lifespan=lifespan)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "user-service"}
+    """Health check with a lightweight DB query to keep Supabase active."""
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT 1")
+        db_status = "connected"
+    except Exception:
+        db_status = "error"
+    return {"status": "ok", "service": "user-service", "database": db_status}
 
 
 # ──────────── Students ────────────
