@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
 from database import get_cursor
 from models import (
     EventOut, EventCreate, EventUpdate,
@@ -9,8 +10,47 @@ from models import (
     ResourceOut, ResourceAssign, MaintenanceCreate,
 )
 import datetime
+import asyncio
+import httpx
 
-app = FastAPI(title="Eventra Event Service", version="1.0.0")
+# URLs of all services to keep alive
+KEEP_ALIVE_URLS = [
+    "https://eventra-xgrj.onrender.com/health",           # user-service
+    "https://eventra-event-service.onrender.com/health",  # event-service
+    "https://eventra-feedbacke-service.onrender.com/health",  # feedback-service
+    "https://eventra-cc.streamlit.app/",                  # frontend
+]
+
+PING_INTERVAL = 600  # 10 minutes
+
+
+async def keep_alive_task():
+    """Background task that pings all services every 10 minutes."""
+    while True:
+        await asyncio.sleep(PING_INTERVAL)
+        async with httpx.AsyncClient(timeout=30) as client:
+            for url in KEEP_ALIVE_URLS:
+                try:
+                    resp = await client.get(url)
+                    print(f"[keep-alive] Pinged {url} -> {resp.status_code}")
+                except Exception as e:
+                    print(f"[keep-alive] Failed to ping {url}: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start keep-alive background task on startup."""
+    task = asyncio.create_task(keep_alive_task())
+    print("[keep-alive] Background ping task started")
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("[keep-alive] Background task stopped")
+
+
+app = FastAPI(title="Eventra Event Service", version="1.0.0", lifespan=lifespan)
 
 
 # ──────────── Health ────────────

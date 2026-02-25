@@ -1,6 +1,43 @@
 import streamlit as st
 import pandas as pd
 import requests
+import threading
+import time
+
+# ---------- KEEP-ALIVE BACKGROUND TASK ----------
+KEEP_ALIVE_URLS = [
+    "https://eventra-xgrj.onrender.com/health",           # user-service
+    "https://eventra-event-service.onrender.com/health",  # event-service
+    "https://eventra-feedbacke-service.onrender.com/health",  # feedback-service
+    "https://eventra-cc.streamlit.app/",                  # frontend (self)
+]
+
+PING_INTERVAL = 600  # 10 minutes
+
+
+def keep_alive_worker():
+    """Background thread that pings all services every 10 minutes."""
+    while True:
+        time.sleep(PING_INTERVAL)
+        for url in KEEP_ALIVE_URLS:
+            try:
+                resp = requests.get(url, timeout=30)
+                print(f"[keep-alive] Pinged {url} -> {resp.status_code}")
+            except Exception as e:
+                print(f"[keep-alive] Failed to ping {url}: {e}")
+
+
+def start_keep_alive():
+    """Start the keep-alive thread once per process."""
+    if "keep_alive_started" not in st.session_state:
+        st.session_state["keep_alive_started"] = True
+        thread = threading.Thread(target=keep_alive_worker, daemon=True)
+        thread.start()
+        print("[keep-alive] Background ping thread started")
+
+
+# Start keep-alive on first load
+start_keep_alive()
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
