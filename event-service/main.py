@@ -25,10 +25,20 @@ PING_INTERVAL = 600  # 10 minutes
 
 
 async def keep_alive_task():
-    """Background task that pings all services every 10 minutes."""
+    """Background task that pings all services and Supabase every 10 minutes."""
     while True:
         await asyncio.sleep(PING_INTERVAL)
-        async with httpx.AsyncClient(timeout=30) as client:
+
+        # Ping Supabase to prevent 7-day inactivity pause
+        try:
+            with get_cursor() as cur:
+                cur.execute("SELECT 1")
+            print("[keep-alive] Supabase DB ping OK")
+        except Exception as e:
+            print(f"[keep-alive] Supabase DB ping FAILED: {e}")
+
+        # Ping all services to prevent Render spin-down
+        async with httpx.AsyncClient(timeout=60) as client:
             for url in KEEP_ALIVE_URLS:
                 try:
                     resp = await client.get(url)

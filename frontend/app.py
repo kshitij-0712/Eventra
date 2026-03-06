@@ -21,7 +21,7 @@ def keep_alive_worker():
         time.sleep(PING_INTERVAL)
         for url in KEEP_ALIVE_URLS:
             try:
-                resp = requests.get(url, timeout=30)
+                resp = requests.get(url, timeout=60)
                 print(f"[keep-alive] Pinged {url} -> {resp.status_code}")
             except Exception as e:
                 print(f"[keep-alive] Failed to ping {url}: {e}")

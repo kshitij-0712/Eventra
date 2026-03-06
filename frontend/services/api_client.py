@@ -26,35 +26,50 @@ USER_SERVICE_URL = _get_config("USER_SERVICE_URL", "http://localhost:8001")
 EVENT_SERVICE_URL = _get_config("EVENT_SERVICE_URL", "http://localhost:8002")
 FEEDBACK_SERVICE_URL = _get_config("FEEDBACK_SERVICE_URL", "http://localhost:8003")
 
-TIMEOUT = 10  # seconds
+TIMEOUT = 60        # seconds — enough for Render cold starts (~30-50s)
+MAX_RETRIES = 3     # retry on transient failures
+RETRY_DELAY = 2     # seconds between retries
 
 
 # ══════════════════════════════════════════
-#  HELPERS
+#  HELPERS (with retry for cold-start tolerance)
 # ══════════════════════════════════════════
+
+import time
+
+
+def _request(method, url, **kwargs):
+    """HTTP request with automatic retry for Render cold-start timeouts."""
+    kwargs.setdefault("timeout", TIMEOUT)
+    last_error = Exception("Request failed after retries")
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.request(method, url, **kwargs)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY)
+        except requests.HTTPError:
+            raise  # don't retry 4xx/5xx — those are real errors
+    raise last_error
+
 
 def _get(url, **kwargs):
-    resp = requests.get(url, timeout=TIMEOUT, **kwargs)
-    resp.raise_for_status()
-    return resp.json()
+    return _request("GET", url, **kwargs)
 
 
 def _post(url, json=None, **kwargs):
-    resp = requests.post(url, json=json, timeout=TIMEOUT, **kwargs)
-    resp.raise_for_status()
-    return resp.json()
+    return _request("POST", url, json=json, **kwargs)
 
 
 def _put(url, json=None, **kwargs):
-    resp = requests.put(url, json=json, timeout=TIMEOUT, **kwargs)
-    resp.raise_for_status()
-    return resp.json()
+    return _request("PUT", url, json=json, **kwargs)
 
 
 def _delete(url, **kwargs):
-    resp = requests.delete(url, timeout=TIMEOUT, **kwargs)
-    resp.raise_for_status()
-    return resp.json()
+    return _request("DELETE", url, **kwargs)
 
 
 # ══════════════════════════════════════════
